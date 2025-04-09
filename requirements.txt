@@ -1,0 +1,8 @@
+python-pptx
+langchain
+langchain-openai
+langchain-google-genai
+langgraph
+pydantic
+python-dotenv
+pillow
