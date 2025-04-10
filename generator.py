@@ -240,12 +240,12 @@ class PowerPointGenerator:
         main_llm_structured_support = self.main_llm_config.supports_structured_output
         messages: List[BaseMessage] = []
 
-        if outline_page.layout_type == "title_slide":
-            logger.info(f"テンプレート '{outline_page.layout_type}' はアウトラインなし。")
-            outline_json = "(タイトルページのためアウトラインはありません)"
-            # return TitlePage(header=outline_page.page_title, content_blocks=[])
-        else:
-            outline_json = outline_page.model_dump_json(indent=2)
+        # if outline_page.layout_type == "title_slide":
+        #     logger.info(f"テンプレート '{outline_page.layout_type}' はアウトラインなし。")
+        #     outline_json = "(タイトルページのためアウトラインはありません)"
+        #     # return TitlePage(header=outline_page.page_title, content_blocks=[])
+        # else:
+        outline_json = outline_page.model_dump_json(indent=2)
 
         if main_llm_structured_support:
             # 構造化出力サポートモデル
@@ -353,7 +353,7 @@ class PowerPointGenerator:
         try:
             # --- テキスト要素の配置 ---
             # 1. Title
-            if selection.title_placeholder_idx is not None and (hasattr(content, 'header') or hasattr(content, 'title')):
+            if selection.title_placeholder_idx is not None and hasattr(content, 'header'):
                 try:
                     slide.placeholders[selection.title_placeholder_idx].text = content.header
                     logger.debug(f"  - Title -> Idx {selection.title_placeholder_idx}")

@@ -122,7 +122,7 @@ class TitleWithBgImagePage(BaseModel):
 
 class TitlePage(BaseModel):
     """プレゼンテーションのタイトルページ。"""
-    title: str = Field(..., description="プレゼンテーションタイトル")
+    header: str = Field(..., description="プレゼンテーションタイトル")
     subtitle: Optional[str] = Field(None, description="サブタイトル（任意）")
 
 # --- 全体コンテンツ用 Union ---
