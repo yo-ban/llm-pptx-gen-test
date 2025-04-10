@@ -57,15 +57,15 @@ class PlaceholderSelection(BaseModel):
 class TextBlockItem(BaseModel):
     """テキストの内容。インデントレベルやフォントサイズも指定可能。"""
     text: str = Field(..., description="テキストの内容")
-    level: int = Field(..., description="インデントレベル (1から4)", ge=1, le=4)
-    font_size: Optional[int] = Field(0, description="フォントサイズを指定可能。既定値: Level1=14, Level2=12, Level3=11, Level4=9", le=16)
+    level: int = Field(..., description="インデントレベル (1から4)")
+    font_size: Optional[int] = Field(None, description="フォントサイズを指定可能。既定値: Level1=14, Level2=12, Level3=11, Level4=9")
 
 class ContentBlock(BaseModel):
     """
     単一のテキストプレースホルダー内における「見出し（レベル0）」と「それに続く箇条書き（レベル1以上）」のまとまり。
     """
     heading: str = Field(..., description="このブロックの見出しとなるテキスト（インデントレベル0に相当）")
-    font_size: Optional[int] = Field(0, description="見出しのフォントサイズを指定可能。既定値: 16", le=20)
+    font_size: Optional[int] = Field(None, description="見出しのフォントサイズを指定可能。既定値: 16")
     items: Optional[Annotated[list[TextBlockItem], Field(None, description="見出しに続く要素のリスト（レベル1以上）")]]
 
 class TextPage(BaseModel):
@@ -78,7 +78,7 @@ class ImagePage(BaseModel):
     header: str = Field(..., description="スライドタイトル")
     content_blocks: Annotated[list[ContentBlock], Field(..., description="主要テキストプレースホルダー内に配置される内容のリスト", max_length=3)]
     image_description: str = Field(..., description="画像の説明（検索/生成用）")
-    image_path: str = Field(..., description="ツールによって取得された実際の画像ファイルパス")
+    image_path: str = Field(..., description="実際の画像ファイルパス。必ずツールで取得した実在のパスである必要があります。")
 
 class TablePage(BaseModel):
     """表を含むページ。"""
@@ -95,20 +95,20 @@ class SectionHeaderPage(BaseModel):
 class TwoColumnPage(BaseModel):
     """2段組ページ。"""
     header: str = Field(..., description="スライドタイトル")
-    left_content_blocks: Annotated[list[ContentBlock], Field(..., max_length=3, description="左カラムのテキストプレースホルダー内に配置される内容のリスト")]
-    right_content_blocks: Annotated[list[ContentBlock], Field(..., max_length=3, description="右カラムのテキストプレースホルダー内に配置される内容のリスト")]
+    left_content_blocks: Annotated[list[ContentBlock], Field(..., description="左カラムのテキストプレースホルダー内に配置される内容のリスト（最大3つ目安）")]
+    right_content_blocks: Annotated[list[ContentBlock], Field(..., description="右カラムのテキストプレースホルダー内に配置される内容のリスト（最大3つ目安）")]
 
 class ContentWithImageRightPage(BaseModel):
     """左コンテンツ＋右画像ページ。"""
     header: str = Field(..., description="スライドタイトル")
-    left_content_blocks: Annotated[list[ContentBlock], Field(..., max_length=3, description="左カラムのテキストプレースホルダー内に配置される内容のリスト")]
+    left_content_blocks: Annotated[list[ContentBlock], Field(..., description="左カラムのテキストプレースホルダー内に配置される内容のリスト（最大3つ目安）")]
     image_description: str = Field(..., description="画像の説明（検索/生成用）")
-    image_path: str = Field(..., description="ツールによって取得された実際の画像ファイルパス")
+    image_path: str = Field(..., description="実際の画像ファイルパス。必ずツールで取得した実在のパスである必要があります。")
 
 class ContentWithTableRightPage(BaseModel):
     """左コンテンツ＋右表ページ。"""
     header: str = Field(..., description="スライドタイトル")
-    left_content_blocks: Annotated[list[ContentBlock], Field(..., max_length=3, description="左カラムのテキストプレースホルダー内に配置される内容のリスト")]
+    left_content_blocks: Annotated[list[ContentBlock], Field(..., description="左カラムのテキストプレースホルダー内に配置される内容のリスト（最大3つ目安）")]
     table_title: str = Field(..., description="表タイトル")
     table_data: List[List[str]] = Field(...)
     key_message: str = Field("", description="キーメッセージ（任意）")
@@ -118,7 +118,7 @@ class TitleWithBgImagePage(BaseModel):
     header: str = Field(..., description="スライドタイトル")
     subtitle: Optional[str] = Field(None, description="サブタイトル（任意）")
     image_description: str = Field(..., description="画像の説明（検索/生成用）")
-    image_path: str = Field(..., description="ツールによって取得された実際の画像ファイルパス")
+    image_path: str = Field(..., description="実際の画像ファイルパス。必ずツールで取得した実在のパスである必要があります。")
 
 class TitlePage(BaseModel):
     """プレゼンテーションのタイトルページ。"""

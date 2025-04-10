@@ -26,6 +26,8 @@ VALIDATE_JSON_HUMAN_PROMPT_TEMPLATE = """
 
 GENERATE_PAGE_CONTENT_SYSTEM_PROMPT = """
 プレゼンテーション全体の情報及び本ページのアウトラインに基づいて、詳細コンテンツを指定形式で生成してください。
+スライドサイズはワイド画面（16:9）です。
+特に指示がない場合、アウトラインと同じ言語を使用してください。（アウトラインが英語なら英語、日本語なら日本語のスライドを作成）
 
 # コンテンツ生成の重要事項： テキスト構造について
 - あなたが生成する `content_blocks` (または `left_content_blocks`, `right_content_blocks`) は、PowerPointスライド上の**単一のテキストプレースホルダー**（テキストボックス）内に配置される内容全体を表します。
@@ -39,7 +41,6 @@ GENERATE_PAGE_CONTENT_SYSTEM_PROMPT = """
 
 # 利用可能なツール (必要な場合のみ使用)
 {tools_description}
-画像が必要なスライドを作成する場合は、最初に画像検索ツールを使用して画像のパスを取得してください。
 """
 
 GENERATE_PAGE_CONTENT_SYSTEM_PROMPT_NON_STRUCTURED_SUFFIX = """
@@ -52,9 +53,6 @@ GENERATE_PAGE_CONTENT_SYSTEM_PROMPT_NON_STRUCTURED_SUFFIX = """
 """
 
 GENERATE_PAGE_CONTENT_HUMAN_PROMPT_TEMPLATE = """
-以下の概要のスライドコンテンツを作成してください。スライドサイズはワイド画面（16:9）です。
-特に指示がない場合、アウトラインと同じ言語を使用してください。（アウトラインが英語なら英語、日本語なら日本語）
-
 # プレゼンテーション全体タイトル
 {presentation_title}
 
@@ -63,6 +61,8 @@ GENERATE_PAGE_CONTENT_HUMAN_PROMPT_TEMPLATE = """
 
 # このページのアウトライン
 {outline_json}
+
+画像が必要なスライドを作成する場合は、必ず最初にsearch_similar_imageツールを使用し、実在する画像のパスを取得してください。
 """
 
 OUTLINE_GENERATION_SYSTEM_PROMPT = """
