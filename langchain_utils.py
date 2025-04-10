@@ -14,6 +14,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
 from models import (
     PageContent, AgentState
@@ -206,7 +207,7 @@ def create_content_gen_workflow(
     tools: list,
     response_class: Type[PageContent],
     structured_output_supported: bool
-):
+) -> CompiledStateGraph:
     """
     特定のページコンテンツ生成用 LangGraph ワークフローを作成します。
     最終応答の検証ステップを含みます。

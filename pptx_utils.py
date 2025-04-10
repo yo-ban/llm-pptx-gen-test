@@ -7,7 +7,7 @@ from pptx import Presentation
 from pptx.text.text import TextFrame
 from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx.util import Pt
-from models import Section
+from models import ContentBlock
 
 logger = logging.getLogger(__name__)
 
@@ -58,13 +58,13 @@ def get_placeholder_details(prs: Presentation, layout_index: int) -> List[Dict[s
     details.sort(key=lambda x: x["index"])
     return details
 
-def add_sections_to_text_frame(text_frame: TextFrame, sections: List[Section]):
+def add_content_blocks_to_text_frame(text_frame: TextFrame, content_blocks: List[ContentBlock]):
     """
-    テキストフレームにセクションと箇条書きを追加する。
+    テキストフレームにコンテンツブロックを追加する。
 
     Args:
         text_frame: 対象の TextFrame オブジェクト。
-        sections (List[Section]): 追加するセクション情報。
+        content_blocks (List[ContentBlock]): 追加するコンテンツブロック情報。
     """
     text_frame.clear()
     text_frame.word_wrap = True
@@ -78,11 +78,11 @@ def add_sections_to_text_frame(text_frame: TextFrame, sections: List[Section]):
         3: 8
     }
 
-    for i, section in enumerate(sections):
+    for i, content_block in enumerate(content_blocks):
 
-        header_text = section.section_header.strip()
-        if not header_text and not section.section_content:
-            logger.info("  - スキップ: 空のセクション")
+        header_text = content_block.heading.strip()
+        if not header_text and not content_block.items:
+            logger.info("  - スキップ: 空のコンテンツブロック")
             continue
 
         if i == 0 and first_paragraph_available:
@@ -93,13 +93,13 @@ def add_sections_to_text_frame(text_frame: TextFrame, sections: List[Section]):
             p_header.text = header_text
 
         p_header.font.bold = True
-        if section.header_font_size and section.header_font_size > 0:
-            p_header.font.size = Pt(section.header_font_size)
+        if content_block.font_size and content_block.font_size > 0:
+            p_header.font.size = Pt(content_block.font_size)
         else:
             p_header.font.size = Pt(font_size_by_level[0])
         p_header.level = 0
 
-        for item in section.section_content:
+        for item in content_block.items:
             item_text = item.text.strip()
             if not item_text:
                 logger.info("  - スキップ: 空の箇条書きアイテム")

@@ -7,12 +7,13 @@ import json
 from typing import List, Dict, Any, Optional, Union, Type
 from pptx import Presentation
 from pptx.util import Pt
+from pptx.slide import Slide
 from langchain_core.language_models.chat_models import (
     BaseChatModel,
 )
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
 from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage
-from langchain_core.utils.function_calling import convert_to_openai_tool  # スキーマ生成用
+from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ValidationError
 
 # --- ローカルモジュールからのインポート ---
@@ -21,9 +22,9 @@ from models import (
     Outline, Page, PlaceholderSelection, PageContent,
     TextPage, ImagePage, TablePage, SectionHeaderPage, TwoColumnPage,
     ContentWithImageRightPage, ContentWithTableRightPage, TitleWithBgImagePage,
-    LLMConfig
+    TitlePage, LLMConfig
 )
-from pptx_utils import get_placeholder_details, add_sections_to_text_frame
+from pptx_utils import get_placeholder_details, add_content_blocks_to_text_frame
 from misc_utils import sanitize_filename
 from langchain_utils import (
     search_similar_image, create_content_gen_workflow,
@@ -32,7 +33,8 @@ from langchain_utils import (
 from prompt_template import (
     GENERATE_PAGE_CONTENT_SYSTEM_PROMPT, GENERATE_PAGE_CONTENT_HUMAN_PROMPT_TEMPLATE,
     GENERATE_PAGE_CONTENT_SYSTEM_PROMPT_NON_STRUCTURED_SUFFIX,
-    OUTLINE_GENERATION_SYSTEM_PROMPT, PLACEHOLDER_SELECTION_PROMPT
+    OUTLINE_GENERATION_SYSTEM_PROMPT, OUTLINE_GENERATION_HUMAN_PROMPT,
+    PLACEHOLDER_SELECTION_PROMPT
 )
 
 class PowerPointGenerator:
@@ -70,7 +72,7 @@ class PowerPointGenerator:
         validator_llm_instance = self.validator_llm_config.instance # バリデーションLLMも取得
         main_llm_structured_support = self.main_llm_config.supports_structured_output
 
-        def _create_workflow(response_class):
+        def _create_workflow(response_class) -> CompiledStateGraph:
             return create_content_gen_workflow(
                 main_llm_instance,
                 validator_llm_instance, # validator_llm を渡す
@@ -80,6 +82,7 @@ class PowerPointGenerator:
             )
 
         self.text_agent = _create_workflow(TextPage)
+        self.title_agent = _create_workflow(TitlePage)
         self.image_agent = _create_workflow(ImagePage)
         self.table_agent = _create_workflow(TablePage)
         self.section_header_agent = _create_workflow(SectionHeaderPage)
@@ -147,13 +150,11 @@ class PowerPointGenerator:
 
         outline_prompt = ChatPromptTemplate.from_messages([
             ("system", OUTLINE_GENERATION_SYSTEM_PROMPT),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "以下の要望に基づいてアウトラインを作成してください:\n\n{input}")
+            ("human", OUTLINE_GENERATION_HUMAN_PROMPT)
         ])
         # format_messages に schema_json も渡す
         messages = outline_prompt.format_messages(
-            input=user_input,
-            chat_history=chat_history,
+            user_request=user_input,
             schema_json=schema_json_str # スキーマ文字列を変数として渡す
         )
 
@@ -214,31 +215,37 @@ class PowerPointGenerator:
             f"ページ '{outline_page.page_title}' ({outline_page.layout_type}) コンテンツ生成開始...")
 
         agent_map = {
-            "text": (self.text_agent, TextPage), 
+            "title_slide": (self.title_agent, TitlePage),
             "text_left_title": (self.text_agent, TextPage),
-            "text_large_left_title": (self.text_agent, TextPage),
-            "image": (self.image_agent, ImagePage), 
-            "table": (self.table_agent, TablePage),
+            "title_with_bg_image": (self.title_with_bg_image_agent, TitleWithBgImagePage),
+            "text": (self.text_agent, TextPage), 
             "section_header": (self.section_header_agent, SectionHeaderPage),
             "two_column": (self.two_column_agent, TwoColumnPage),
             "two_column_right_wide": (self.two_column_agent, TwoColumnPage),
-            "two_column_left_wide": (self.two_column_agent, TwoColumnPage),
             "content_with_image_right": (self.content_with_image_right_agent, ContentWithImageRightPage),
             "content_with_table_right": (self.content_with_table_right_agent, ContentWithTableRightPage),
-            "title_with_bg_image": (self.title_with_bg_image_agent, TitleWithBgImagePage),
+            "two_column_left_wide": (self.two_column_agent, TwoColumnPage),
+            "table": (self.table_agent, TablePage),
+            "text_large_left_title": (self.text_agent, TextPage),
+            # "image": (self.image_agent, ImagePage), 
         }
-
+        
+        agent_to_invoke: CompiledStateGraph
+        expected_class: Type[BaseModel]
         agent_to_invoke, expected_class = agent_map.get(
             outline_page.layout_type, (self.text_agent, TextPage))
 
-        if outline_page.layout_type == "title_slide":
-            logger.info(f"テンプレート '{outline_page.layout_type}' はコンテンツ生成スキップ。")
-            return TextPage(header=outline_page.page_title, sections=[])
 
         # --- プロンプト準備 ---
         main_llm_structured_support = self.main_llm_config.supports_structured_output
         messages: List[BaseMessage] = []
-        outline_json = outline_page.model_dump_json(indent=2)
+
+        if outline_page.layout_type == "title_slide":
+            logger.info(f"テンプレート '{outline_page.layout_type}' はアウトラインなし。")
+            outline_json = "(タイトルページのためアウトラインはありません)"
+            # return TitlePage(header=outline_page.page_title, content_blocks=[])
+        else:
+            outline_json = outline_page.model_dump_json(indent=2)
 
         if main_llm_structured_support:
             # 構造化出力サポートモデル
@@ -257,7 +264,7 @@ class PowerPointGenerator:
         else:
             # 構造化出力非サポートモデル
             schema_json = json.dumps(expected_class.model_json_schema(), indent=2, ensure_ascii=False)
-            logger.info(f"schema_json: {schema_json}")
+            # logger.info(f"schema_json: {schema_json}")
             current_tools = self.tools if expected_class != SectionHeaderPage else []
             tools_description = "なし"
             if current_tools:
@@ -338,7 +345,7 @@ class PowerPointGenerator:
             return None
 
 
-    def populate_slide(self, slide, selection: PlaceholderSelection, content: PageContent):
+    def populate_slide(self, slide: Slide, selection: PlaceholderSelection, content: PageContent):
         """生成されたコンテンツをスライドに配置。 image_path を使用。"""
         page_header = getattr(content, 'header', 'N/A')
         logger.info(f"Populating slide '{page_header}'...")
@@ -346,7 +353,7 @@ class PowerPointGenerator:
         try:
             # --- テキスト要素の配置 ---
             # 1. Title
-            if selection.title_placeholder_idx is not None and hasattr(content, 'header'):
+            if selection.title_placeholder_idx is not None and (hasattr(content, 'header') or hasattr(content, 'title')):
                 try:
                     slide.placeholders[selection.title_placeholder_idx].text = content.header
                     logger.debug(f"  - Title -> Idx {selection.title_placeholder_idx}")
@@ -363,13 +370,13 @@ class PowerPointGenerator:
 
             # 3. Main Content (Text)
             if selection.content_placeholder_idx_main is not None:
-                sections = getattr(content, 'sections', getattr(content, 'left_sections', None))
-                if sections:
+                content_blocks = getattr(content, 'content_blocks', getattr(content, 'left_content_blocks', None))
+                if content_blocks:
                     try:
                         # Placeholderオブジェクトを取得
                         ph = slide.placeholders[selection.content_placeholder_idx_main]
                         if ph.has_text_frame:
-                            add_sections_to_text_frame(ph.text_frame, sections)
+                            add_content_blocks_to_text_frame(ph.text_frame, content_blocks)
                             logger.debug(f"  - Main Content -> Idx {selection.content_placeholder_idx_main}")
                         else:
                             logger.warning(f"  - Warn: Main Content Idx {selection.content_placeholder_idx_main} has no text frame.")
@@ -378,12 +385,12 @@ class PowerPointGenerator:
 
             # 4. Secondary Content (Text)
             if selection.content_placeholder_idx_secondary is not None:
-                sections = getattr(content, 'right_sections', None)
-                if sections:
+                content_blocks = getattr(content, 'right_content_blocks', None)
+                if content_blocks:
                     try:
                         ph = slide.placeholders[selection.content_placeholder_idx_secondary]
                         if ph.has_text_frame:
-                            add_sections_to_text_frame(ph.text_frame, sections)
+                            add_content_blocks_to_text_frame(ph.text_frame, content_blocks)
                             logger.debug(f"  - Secondary Content -> Idx {selection.content_placeholder_idx_secondary}")
                         else:
                             logger.warning(f"  - Warn: Secondary Content Idx {selection.content_placeholder_idx_secondary} has no text frame.")

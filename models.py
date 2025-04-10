@@ -17,10 +17,19 @@ class Page(BaseModel):
     page_summary: str = Field(..., description="このページに含むコンテンツ概要")
     plan: str = Field(..., description="前後のページを考慮したこのページのコンテンツ作成計画")
     layout_type: Literal[
-        "title_slide", "text_left_title", "title_with_bg_image", "text",
-        "section_header", "two_column", "two_column_right_wide",
-        "content_with_image_right", "content_with_table_right",
-        "two_column_left_wide", "table", "text_large_left_title",
+        "title_slide",
+        "text",
+        "text_left_title",
+        "text_large_left_title",
+        "image",
+        "table",
+        "section_header",
+        "two_column",
+        "two_column_right_wide",
+        "two_column_left_wide",
+        "content_with_image_right",
+        "content_with_table_right",
+        "title_with_bg_image",
         "title_with_blank", # 必要なら追加
     ] = Field(..., description="スライドのレイアウトタイプを指定")
 
@@ -45,29 +54,31 @@ class PlaceholderSelection(BaseModel):
 
 # --- コンテンツ詳細用 ---
 
-class SectionContentItem(BaseModel):
-    """箇条書きのアイテム。インデントレベルやフォントサイズも指定可能。"""
-    text: str = Field(..., description="テキスト")
-    level: int = Field(1, description="箇条書きのインデントレベル", ge=1, le=3)
-    font_size: Optional[int] = Field(0, description="フォントサイズを指定できます。既定値: Level1=12, Level2=10, Level3=8", le=16)
+class TextBlockItem(BaseModel):
+    """テキストの内容。インデントレベルやフォントサイズも指定可能。"""
+    text: str = Field(..., description="テキストの内容")
+    level: int = Field(..., description="インデントレベル (1から4)", ge=1, le=4)
+    font_size: Optional[int] = Field(0, description="フォントサイズを指定可能。既定値: Level1=14, Level2=12, Level3=11, Level4=9", le=16)
 
-class Section(BaseModel):
-    """スライド内のセクション（タイトル＋箇条書き）。"""
-    section_header: str = Field(..., description="セクションタイトル（箇条書きの項目のレベル0に相当）")
-    header_font_size: Optional[int] = Field(0, description="セクションタイトルのフォントサイズ。既定値: 16", le=20)
-    section_content: Annotated[list[SectionContentItem], Field(..., description="セクションの内容の箇条書きリスト")]
+class ContentBlock(BaseModel):
+    """
+    単一のテキストプレースホルダー内における「見出し（レベル0）」と「それに続く箇条書き（レベル1以上）」のまとまり。
+    """
+    heading: str = Field(..., description="このブロックの見出しとなるテキスト（インデントレベル0に相当）")
+    font_size: Optional[int] = Field(0, description="見出しのフォントサイズを指定可能。既定値: 16", le=20)
+    items: Optional[Annotated[list[TextBlockItem], Field(None, description="見出しに続く要素のリスト（レベル1以上）")]]
 
 class TextPage(BaseModel):
     """テキスト主体のページ。"""
     header: str = Field(..., description="スライドタイトル")
-    sections: Annotated[list[Section], Field(..., max_length=5)]
+    content_blocks: Annotated[list[ContentBlock], Field(..., max_length=5, description="主要テキストプレースホルダー内に配置される内容のリスト")]
 
 class ImagePage(BaseModel):
     """画像を含むページ。"""
     header: str = Field(..., description="スライドタイトル")
-    sections: Annotated[list[Section], Field(..., description="文字量少なめ", max_length=3)]
+    content_blocks: Annotated[list[ContentBlock], Field(..., description="主要テキストプレースホルダー内に配置される内容のリスト", max_length=3)]
     image_description: str = Field(..., description="画像の説明（検索/生成用）")
-    image_path: Optional[str] = Field(None, description="ツールによって取得された実際の画像ファイルパス")
+    image_path: str = Field(..., description="ツールによって取得された実際の画像ファイルパス")
 
 class TablePage(BaseModel):
     """表を含むページ。"""
@@ -84,20 +95,20 @@ class SectionHeaderPage(BaseModel):
 class TwoColumnPage(BaseModel):
     """2段組ページ。"""
     header: str = Field(..., description="スライドタイトル")
-    left_sections: Annotated[list[Section], Field(..., max_length=3)]
-    right_sections: Annotated[list[Section], Field(..., max_length=3)]
+    left_content_blocks: Annotated[list[ContentBlock], Field(..., max_length=3, description="左カラムのテキストプレースホルダー内に配置される内容のリスト")]
+    right_content_blocks: Annotated[list[ContentBlock], Field(..., max_length=3, description="右カラムのテキストプレースホルダー内に配置される内容のリスト")]
 
 class ContentWithImageRightPage(BaseModel):
     """左コンテンツ＋右画像ページ。"""
     header: str = Field(..., description="スライドタイトル")
-    left_sections: Annotated[list[Section], Field(..., max_length=3)]
-    image_description: str = Field(..., description="画像の説明")
-    image_path: Optional[str] = Field(None, description="ツールによって取得された実際の画像ファイルパス")
+    left_content_blocks: Annotated[list[ContentBlock], Field(..., max_length=3, description="左カラムのテキストプレースホルダー内に配置される内容のリスト")]
+    image_description: str = Field(..., description="画像の説明（検索/生成用）")
+    image_path: str = Field(..., description="ツールによって取得された実際の画像ファイルパス")
 
 class ContentWithTableRightPage(BaseModel):
     """左コンテンツ＋右表ページ。"""
     header: str = Field(..., description="スライドタイトル")
-    left_sections: Annotated[list[Section], Field(..., max_length=3)]
+    left_content_blocks: Annotated[list[ContentBlock], Field(..., max_length=3, description="左カラムのテキストプレースホルダー内に配置される内容のリスト")]
     table_title: str = Field(..., description="表タイトル")
     table_data: List[List[str]] = Field(...)
     key_message: str = Field("", description="キーメッセージ（任意）")
@@ -106,13 +117,18 @@ class TitleWithBgImagePage(BaseModel):
     """背景画像付きタイトルページ。"""
     header: str = Field(..., description="スライドタイトル")
     subtitle: Optional[str] = Field(None, description="サブタイトル（任意）")
-    image_description: str = Field(..., description="背景画像の説明")
-    image_path: Optional[str] = Field(None, description="ツールによって取得された実際の画像ファイルパス")
+    image_description: str = Field(..., description="画像の説明（検索/生成用）")
+    image_path: str = Field(..., description="ツールによって取得された実際の画像ファイルパス")
+
+class TitlePage(BaseModel):
+    """プレゼンテーションのタイトルページ。"""
+    title: str = Field(..., description="プレゼンテーションタイトル")
+    subtitle: Optional[str] = Field(None, description="サブタイトル（任意）")
 
 # --- 全体コンテンツ用 Union ---
 PageContent = Union[
     TextPage, ImagePage, TablePage, SectionHeaderPage, TwoColumnPage,
-    ContentWithImageRightPage, ContentWithTableRightPage, TitleWithBgImagePage
+    ContentWithImageRightPage, ContentWithTableRightPage, TitleWithBgImagePage, TitlePage
 ]
 
 class PowerPointContent(BaseModel):
