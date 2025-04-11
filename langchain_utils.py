@@ -11,8 +11,11 @@ from typing import List, Optional, Union, Type, Tuple, Any
 from pydantic import BaseModel, ValidationError
 from langchain_core.tools import tool
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage
+from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage, ToolMessage, AIMessage
 from langchain_openai import ChatOpenAI
+from langchain_core.language_models.chat_models import (
+    BaseChatModel,
+)
 from langgraph.graph import StateGraph, END
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
@@ -75,7 +78,7 @@ def extract_json_from_text(text: str) -> Optional[str]:
 def validate_and_parse_json(
     raw_output: Union[str, BaseMessage],
     expected_class: Type[BaseModel],
-    validator_llm: ChatOpenAI,
+    validator_llm: BaseChatModel,
     max_attempts: int = 2  # 再パース試行回数
 ) -> Optional[BaseModel]:
     """
@@ -202,8 +205,8 @@ def validate_and_parse_json(
 
 # ===== LangGraph Workflow Creation =====
 def create_content_gen_workflow(
-    llm: ChatOpenAI,
-    validator_llm: ChatOpenAI,  # バリデーション用LLMを受け取る
+    llm: BaseChatModel,
+    validator_llm: BaseChatModel,  # バリデーション用LLMを受け取る
     tools: list,
     response_class: Type[PageContent],
     structured_output_supported: bool
@@ -222,33 +225,88 @@ def create_content_gen_workflow(
     Returns:
         CompiledStateGraph: コンパイル済みワークフロー。
     """
-    # --- モデル設定 ---
-    if structured_output_supported:
-        logger.info(
-            f"Creating workflow for {response_class.__name__} with structured output support.")
-        # 構造化出力サポート: 期待クラスもツールとしてバインド
-        model_runnable = llm.bind_tools(
-            tools + [response_class], #tool_choice=response_class.__name__
-        )
+    # --- 画像検索ツールを強制する Runnable を準備 ---
+    # search_similar_image ツールオブジェクトを取得 (tools リスト内にある前提)
+    image_search_tool = next((t for t in tools if t.name == "search_similar_image"), None)
+    if not image_search_tool:
+        logger.warning("Workflow creation: search_similar_image tool not found in the provided tools list.")
+        # 画像検索ツールがない場合は強制できないので、通常のLLMを使う
+        forced_image_search_llm = None
     else:
-        logger.info(
-            f"Creating workflow for {response_class.__name__} WITHOUT structured output support.")
-        # 構造化出力非サポート: ツールのみバインド
-        model_runnable = llm.bind_tools(tools)
+        # search_similar_image のみを強制する LLM Runnable
+        forced_image_search_llm = llm.bind_tools([image_search_tool], tool_choice="search_similar_image")
+
+    # --- モデル設定 (構造化出力サポート有無に基づく) ---
+    if structured_output_supported:
+        logger.info(f"Creating workflow for {response_class.__name__} with structured output support.")
+        # model_runnable = llm.bind_tools(tools + [response_class])
+        model_runnable = llm.with_structured_output(response_class)
+
+    else:
+        logger.info(f"Creating workflow for {response_class.__name__} WITHOUT structured output support.")
+        # model_runnable = llm.bind_tools(tools)
+        model_runnable = llm
 
     # --- ノード定義 ---
     def call_model(state: AgentState):
-        """LLMを呼び出すノード"""
-        logger.debug(
-            f"LangGraph: Calling model {getattr(llm, 'model', 'N/A')} for {response_class.__name__}")
-        response = model_runnable.invoke(state["messages"])
-        # 新しいメッセージを既存のリストに追加する形で返す
-        return {"messages": [response]}
+        """LLMを呼び出すノード。画像レイアウトの場合は画像検索を優先試行。"""
+
+        # リトライカウントを取得し、インクリメント
+        current_retry_count = state.get("llm_call_retry_count", 0)
+        logger.debug(f"Entering call_model for {response_class.__name__}. Attempt {current_retry_count + 1}")
+        # 次回の呼び出しのためにカウントをインクリメントしておく（この戻り値に含まれる）
+        next_retry_count = current_retry_count + 1
+
+        # response_class が画像関連のクラスかどうで判断
+        is_image_layout = 'image_path' in response_class.model_fields
+        logger.info(f"{response_class.__name__} has image_path field: {is_image_layout}")
+
+        # 状態内に search_similar_image の ToolMessage が既にあるかチェック
+        has_image_search_result = any(
+            isinstance(msg, ToolMessage) and msg.name == "search_similar_image"
+            for msg in state.get("messages", [])
+        )
+
+        response: Optional[AIMessage] = None # 型アノテーションを追加
+        llm_to_use = model_runnable
+
+        if is_image_layout and not has_image_search_result and forced_image_search_llm:
+            logger.info(f"LangGraph: Attempting forced 'search_similar_image' for {response_class.__name__}")
+            llm_to_use = forced_image_search_llm
+        else:
+            logger.info(f"LangGraph: Using standard model call for {response_class.__name__}")
+            llm_to_use = model_runnable
+
+        try:
+            response = llm_to_use.invoke(state["messages"])
+
+            # 強制検索を試みたが、期待するツールコールが生成されなかった場合のフォールバック
+            if llm_to_use == forced_image_search_llm and (
+                not response or not response.tool_calls or not any(tc["name"] == "search_similar_image" for tc in response.tool_calls)
+                ):
+                logger.warning(f"Forced image search for {response_class.__name__} did not generate the expected tool call. Falling back to standard model.")
+                response = model_runnable.invoke(state["messages"]) # 通常モデルで再試行
+
+            # 空レスポンスかどうかをチェック
+            is_empty_response = not response or (not response.content and not response.tool_calls)
+            if is_empty_response:
+                logger.warning(f"LLM returned an empty response for {response_class.__name__}")
+                # 空レスポンスの場合は messages は更新せず、リトライカウントのみ返す
+                return {"llm_call_retry_count": next_retry_count}
+
+        except Exception as e:
+            logger.error(f"Error during LLM invocation in call_model for {response_class.__name__}: {e}", exc_info=True)
+            # エラーの場合も messages は更新せず、リトライカウントのみ返す
+            return {"llm_call_retry_count": next_retry_count}
+
+        # 正常な応答が得られた場合は、メッセージを追加し、リトライカウントをリセットして返す
+        return {"messages": [response], "llm_call_retry_count": 0}
+
 
     tool_node = ToolNode(tools)
 
     # functools.partial を使って validator_llm を固定引数として渡す
-    def _validate_final_response_node_func(state: AgentState, validator_llm_for_node: ChatOpenAI):
+    def _validate_final_response_node_func(state: AgentState, validator_llm_for_node: BaseChatModel):
         """最終応答を検証/修正し、状態を更新するノード"""
         logger.debug(
             f"Validating final response for {response_class.__name__}")
@@ -316,30 +374,44 @@ def create_content_gen_workflow(
     validate_final_response_node = functools.partial(
         _validate_final_response_node_func, validator_llm_for_node=validator_llm)
 
-    # --- 条件分岐ロジック ---
+    # --- 条件分岐ロジック (should_continue) ---
+    # 強制ツールコールが失敗した場合でも、通常の model_runnable が呼ばれ、その結果に基づいて遷移する。
     def should_continue(state: AgentState):
-        """次にどのノードに進むかを決定する"""
-        last_message = state["messages"][-1] if state["messages"] else None
-        if not last_message:
-            logger.error("should_continue: No messages found in state.")
-            return END  # エラーケースとして終了させる
+        """次にどのノードに進むかを決定する。空レスポンスやエラーの場合はリトライを試みる。"""
+        messages = state.get("messages", [])
+        last_message = messages[-1] if messages else None
+        retry_count = state.get("llm_call_retry_count", 0) # agentノードが更新したカウント
+        max_retries = state.get("max_llm_retries", 2)
 
+        # 最後のメッセージがない、AIMessageでない、または内容が空か、リトライカウントが 0 より大きい場合
+        # (つまり、call_model が正常な応答を返さなかった場合)
+        is_invalid_or_empty = not last_message or not isinstance(last_message, AIMessage) or (not last_message.content and not last_message.tool_calls)
+        needs_retry = retry_count > 0 # call_model がリトライカウントを増やした場合
+
+        if is_invalid_or_empty or needs_retry:
+            logger.warning(f"should_continue ({response_class.__name__}): Last message is invalid/empty or retry is needed (Retry count: {retry_count}).")
+            if retry_count < max_retries:
+                logger.info(f"Attempting retry {retry_count + 1}/{max_retries} by returning to agent.")
+                return "agent" # agent に戻して再実行
+            else:
+                logger.error(f"Max retries ({max_retries}) reached for {response_class.__name__}. Proceeding to validation (likely failing).")
+                return "validate" # 最大リトライ回数を超えたら検証へ
+
+        # 最後のメッセージが有効な場合 (リトライ不要)
         if not last_message.tool_calls:
-            logger.info("LangGraph: No tool calls. Proceeding to validation.")
-            return "validate"  # ツール呼び出しがない場合は検証へ
+            logger.info(f"LangGraph ({response_class.__name__}): No tool calls. Proceeding to validation.")
+            return "validate"
 
         # ツールコールがある場合
         non_final_tool_calls = [
-            tc for tc in last_message.tool_calls if tc["name"] != response_class.__name__]
+            tc for tc in last_message.tool_calls if tc["name"] != response_class.__name__
+        ]
 
-        if non_final_tool_calls:
-            logger.info(
-                f"LangGraph: Non-final tool call detected ({[tc['name'] for tc in non_final_tool_calls]}). Continuing to tools node.")
-            return "continue"  # 検索ツールなどが呼ばれた場合
+        if any(tc["name"] == "search_similar_image" for tc in non_final_tool_calls) or non_final_tool_calls:
+            logger.info(f"LangGraph ({response_class.__name__}): Non-final tool call detected ({[tc['name'] for tc in non_final_tool_calls]}). Continuing to tools node.")
+            return "continue"
         else:
-            # 最終応答クラスのツールコールのみ、または予期せぬツールコールの場合も検証へ
-            logger.info(
-                f"LangGraph: Final response class tool call ({response_class.__name__}) or only tool calls found. Proceeding to validation.")
+            logger.info(f"LangGraph ({response_class.__name__}): Only final response tool call or unexpected calls found. Proceeding to validation. Calls: {[tc['name'] for tc in last_message.tool_calls]}")
             return "validate"
 
     # --- グラフ構築 ---

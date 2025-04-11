@@ -39,7 +39,7 @@ GENERATE_PAGE_CONTENT_SYSTEM_PROMPT = """
   - `ContentBlock` の数を減らす
   - `ContentBlock` 内の `items` の数を調整する
 
-# 利用可能なツール (必要な場合のみ使用)
+# 利用可能なツール
 {tools_description}
 """
 
@@ -61,8 +61,6 @@ GENERATE_PAGE_CONTENT_HUMAN_PROMPT_TEMPLATE = """
 
 # このページのアウトライン
 {outline_json}
-
-画像が必要なスライドを作成する場合は、必ず最初にsearch_similar_imageツールを使用し、実在する画像のパスを取得してください。
 """
 
 OUTLINE_GENERATION_SYSTEM_PROMPT = """

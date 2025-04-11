@@ -148,6 +148,8 @@ class AgentState(MessagesState):
     final_path: Optional[str] = None
     validated_content: Optional[Any] = None
     validation_error: Optional[str] = None
+    llm_call_retry_count: int = 0 # LLM呼び出しリトライカウント
+    max_llm_retries: int = 2 # 最大リトライ回数
 
 # ===== LLM 設定クラス =====
 class LLMConfig(BaseModel):

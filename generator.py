@@ -22,7 +22,7 @@ from models import (
     Outline, Page, PlaceholderSelection, PageContent,
     TextPage, ImagePage, TablePage, SectionHeaderPage, TwoColumnPage,
     ContentWithImageRightPage, ContentWithTableRightPage, TitleWithBgImagePage,
-    TitlePage, LLMConfig
+    TitlePage, LLMConfig, AgentState
 )
 from pptx_utils import get_placeholder_details, add_content_blocks_to_text_frame
 from misc_utils import sanitize_filename
@@ -76,7 +76,7 @@ class PowerPointGenerator:
             return create_content_gen_workflow(
                 main_llm_instance,
                 validator_llm_instance, # validator_llm を渡す
-                self.tools if response_class != SectionHeaderPage else [],
+                self.tools, # if response_class != SectionHeaderPage else [],
                 response_class,
                 main_llm_structured_support
             )
@@ -295,8 +295,13 @@ class PowerPointGenerator:
         if agent_to_invoke and expected_class:
             try:
                 logger.debug(f"Invoking workflow for {expected_class.__name__}...")
+
+                initial_state = AgentState(
+                    messages=messages,
+                    # max_llm_retries=3 # 必要ならここで上書き
+                )
                 # ワークフローを実行し、最終状態を取得 (辞書として受け取る)
-                response_state_dict = agent_to_invoke.invoke({"messages": messages})
+                response_state_dict = agent_to_invoke.invoke(initial_state)
                 # ★デバッグログを追加して内容を確認
                 logger.debug(f"Raw response state dict from workflow: {response_state_dict}")
                 logger.debug(f"Type of raw response state dict: {type(response_state_dict)}")
@@ -361,10 +366,14 @@ class PowerPointGenerator:
                     logger.warning(f"  - Warn: Title Idx {selection.title_placeholder_idx} invalid or inaccessible: {e}")
 
             # 2. Subtitle
-            if selection.subtitle_placeholder_idx is not None and hasattr(content, 'subtitle') and content.subtitle:
+            if selection.subtitle_placeholder_idx is not None and hasattr(content, 'subtitle'):
                 try:
-                    slide.placeholders[selection.subtitle_placeholder_idx].text = content.subtitle
-                    logger.debug(f"  - Subtitle -> Idx {selection.subtitle_placeholder_idx}")
+                    if content.subtitle:
+                        slide.placeholders[selection.subtitle_placeholder_idx].text = content.subtitle
+                        logger.debug(f"  - Subtitle -> Idx {selection.subtitle_placeholder_idx}")
+                    else:
+                        slide.placeholders[selection.subtitle_placeholder_idx].text = ""
+                        logger.debug(f"  - Subtitle -> Idx {selection.subtitle_placeholder_idx} (empty)")
                 except (IndexError, KeyError, AttributeError) as e:
                     logger.warning(f"  - Warn: Subtitle Idx {selection.subtitle_placeholder_idx} invalid or inaccessible: {e}")
 
