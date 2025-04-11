@@ -71,12 +71,12 @@ class ContentBlock(BaseModel):
 class TextPage(BaseModel):
     """テキスト主体のページ。"""
     header: str = Field(..., description="スライドタイトル")
-    content_blocks: Annotated[list[ContentBlock], Field(..., max_length=5, description="主要テキストプレースホルダー内に配置される内容のリスト")]
+    content_blocks: Annotated[list[ContentBlock], Field(..., description="主要テキストプレースホルダー内に配置される内容のリスト（最大5つ目安）")]
 
 class ImagePage(BaseModel):
     """画像を含むページ。"""
     header: str = Field(..., description="スライドタイトル")
-    content_blocks: Annotated[list[ContentBlock], Field(..., description="主要テキストプレースホルダー内に配置される内容のリスト", max_length=3)]
+    content_blocks: Annotated[list[ContentBlock], Field(..., description="主要テキストプレースホルダー内に配置される内容のリスト（最大3つ目安）")]
     image_description: str = Field(..., description="画像の説明（検索/生成用）")
     image_path: str = Field(..., description="実際の画像ファイルパス。必ずツールで取得した実在のパスである必要があります。")
 

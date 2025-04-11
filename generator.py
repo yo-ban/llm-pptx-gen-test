@@ -17,7 +17,10 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ValidationError
 
 # --- ローカルモジュールからのインポート ---
-from config import logger, LAYOUT_MAPPING, DEFAULT_LAYOUT_INDEX
+from config import (
+    logger, LAYOUT_MAPPING, DEFAULT_LAYOUT_INDEX, LAYOUT_DESCRIPTION, LAYOUT_HINT_TEXT,
+    PLACEHOLDER_SELECTION_HINT_TEXT
+)
 from models import (
     Outline, Page, PlaceholderSelection, PageContent,
     TextPage, ImagePage, TablePage, SectionHeaderPage, TwoColumnPage,
@@ -148,15 +151,35 @@ class PowerPointGenerator:
         schema_json_str = json.dumps(Outline.model_json_schema(), indent=2, ensure_ascii=False)
         logger.debug(f"アウトラインスキーマ: {schema_json_str}")
 
-        outline_prompt = ChatPromptTemplate.from_messages([
-            ("system", OUTLINE_GENERATION_SYSTEM_PROMPT),
-            ("human", OUTLINE_GENERATION_HUMAN_PROMPT)
-        ])
-        # format_messages に schema_json も渡す
-        messages = outline_prompt.format_messages(
-            user_request=user_input,
-            schema_json=schema_json_str # スキーマ文字列を変数として渡す
-        )
+        # LAYOUT_MAPPING と LAYOUT_DESCRIPTION から説明リストを生成
+        layout_descriptions = []
+        # LAYOUT_MAPPING のキーの順序を保持する
+        for idx, layout_name in enumerate(sorted(LAYOUT_MAPPING.keys(), key=lambda k: LAYOUT_MAPPING[k])):
+            description = LAYOUT_DESCRIPTION.get(layout_name, f"{layout_name}の説明が見つかりません。")
+            # LLMに提示する形式に整形 (インデックス情報は不要なため含めない)
+            layout_descriptions.append(f"*   `{layout_name}` ({idx}): {description}")
+
+        # 生成したリストを改行区切りの文字列にする
+        layout_descriptions_list_str = "\n".join(layout_descriptions)
+        logger.info(f"動的に生成されたレイアウト説明:\n{layout_descriptions_list_str}")
+
+        # プロンプトテンプレートを準備
+        # System プロンプトに変数を埋め込む
+        system_prompt = PromptTemplate.from_template(OUTLINE_GENERATION_SYSTEM_PROMPT)
+        # Human プロンプトに変数を埋め込む
+        human_prompt = PromptTemplate.from_template(OUTLINE_GENERATION_HUMAN_PROMPT)
+
+        # メッセージリストを作成
+        messages = [
+            SystemMessage(content=system_prompt.format(
+                schema_json=schema_json_str,
+                layout_descriptions_list=layout_descriptions_list_str,
+                layout_hint_text=LAYOUT_HINT_TEXT
+            )),
+            HumanMessage(content=human_prompt.format(
+                user_request=user_input
+            ))
+        ]
 
         # メインLLMの設定を使用してフォールバック付きで呼び出し
         outline = self._invoke_structured_output_with_fallback(
@@ -191,7 +214,8 @@ class PowerPointGenerator:
             slide_outline_json=slide_outline_json_str,
             available_placeholders_json=available_placeholders_json_str,
             layout_type=outline_page.layout_type,
-            schema_json=schema_json_str
+            schema_json=schema_json_str,
+            placeholder_selection_hint_text=PLACEHOLDER_SELECTION_HINT_TEXT.strip()
         )
         messages = [HumanMessage(content=formatted_prompt)]
 
@@ -498,7 +522,7 @@ class PowerPointGenerator:
 
     def create_presentation(self, user_input: str, output_dir: str):
         """プレゼンテーション生成のメインプロセスを実行。"""
-        logger.info("プレゼンテーション生成プロセス開始。")
+        logger.info(f"プレゼンテーション生成プロセス開始。ユーザーの要望: {user_input}")
         # 1. アウトライン生成
         outline = self.generate_outline(user_input)
         if not outline or not outline.pages:
